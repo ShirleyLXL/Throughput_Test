@@ -75,7 +75,7 @@ main(int argc, char *argv[])
 ```
 buildmyram 400
 ```
-## 三. 测试ram盘和磁盘的吞吐量
+## 三. 测试磁盘/ram盘和磁盘的吞吐量
 ### 1. 在ram盘上创建内存文件系统
 ```
 mkfs.mfs /dev/myram/ 
@@ -83,8 +83,8 @@ mount /dev/myram/ /usr/mnt
 ```
 查看目录挂载 df /usr/mnt
 ### 2. 测试函数
-（a）
-```
+（a） 顺序/随机写
+```C
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -117,7 +117,7 @@ for(k=64; k<16384; k*=2){
   for(i=0; i<CONCURRENCY; i++){
     if(fork()==0){
       for(j=0; j<WRITE_SIZE/k; j++){
-        // lseek(fd, rand()%1000, SEEK_SET);
+        // lseek(fd, rand()%314572800, SEEK_SET);	//把注释去掉即是随机写
         write(fd, buffer, k);
       }
       exit(0);
@@ -137,3 +137,68 @@ for(k=64; k<16384; k*=2){
 }
 
 ```
+顺序/随机读
+```C
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/time.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+
+#define CONCURRENCY 10
+#define BUFFER_SIZE 16384
+#define WRITE_SIZE 31457280
+
+long long start_time;
+long long end_time;
+
+int main()
+{
+  int i, j, k;
+  int fd;
+	char buffer[BUFFER_SIZE]; 
+	struct timeval start, end;
+
+  srand(time(NULL));
+
+  for(k=64; k<=16384; k*=2){
+  // k = 16384;
+    fd = open("writefile", O_RDONLY | O_SYNC | O_DIRECT);
+    gettimeofday(&start,NULL);
+    start_time = start.tv_sec*1000000 + start.tv_usec;
+    for(i=0; i<CONCURRENCY; i++){
+      if(fork()==0){
+        for(j=0; j<WRITE_SIZE/k; j++){
+          // lseek(fd, rand()%31457280, SEEK_SET);
+          read(fd, buffer, k);
+        }
+        exit(0);
+      }
+    }
+    for(i=0; i<CONCURRENCY; i++){
+        waitpid(-1, NULL, 0);
+    }
+    close(fd);
+    gettimeofday(&end,NULL);
+    end_time = end.tv_sec*1000000 + end.tv_usec;
+    printf("sequence read:\n");
+    printf("time: %f\n", (end_time - start_time)/1000000.0);
+    printf("throughput: %f\n", (WRITE_SIZE*CONCURRENCY)/1024.0/1024.0/((end_time - start_time)/1000000.0));
+}
+	return 0;
+}
+
+```
+## 结果
+|    	|    64b    	|    128b   	|    256b   	|    512b    	| 1kb        	| 2kb        	| 4kb        	| 8kb        	| 16kb       	|
+|:-----------:	|:---------:	|:---------:	|:---------:	|:----------:	|------------	|------------	|------------	|------------	|------------	|
+|  磁盘顺序写 	|  10.27984 	| 15.584416 	| 23.622047 	|  28.481011 	| 34.285714  	| 37.57829   	| 42.553191  	| 41.37931   	| 42.452834  	|
+|  磁盘随机写 	|  6.147541 	| 11.635424 	| 18.018018 	|  25.210084 	| 31.971582  	| 33.333333  	| 40.089089  	| 41.09589   	| 40.540541  	|
+|  磁盘顺序读 	| 12.931034 	| 24.965327 	| 47.619048 	|  88.235294 	| 155.17236  	| 250        	| 375        	| 486.487012 	| 545.454545 	|
+| 磁盘随机读  	| 8.097166  	| 14.61039  	| 28.753992 	| 54.878055  	| 101.694915 	| 174.757248 	| 281.249912 	| 409.091095 	| 498.411453 	|
+| ram盘顺序写 	| 11.635424 	| 24.423339 	| 49.861501 	| 90.452252  	| 152.542425 	| 243.243309 	| 352.941176 	| 400        	| 450        	|
+| ram盘随机写 	| 12.295082 	| 22.988506 	| 44.334973 	| 90.452252  	| 162.162162 	| 272.727273 	| 418.605041 	| 529.411453 	| 500        	|
+| ram盘顺序读 	| 24.593164 	| 47.368424 	| 88.669933 	| 155.172441 	| 260.839565 	| 360.869565 	| 391.304178 	| 514.286008 	| 600        	|
